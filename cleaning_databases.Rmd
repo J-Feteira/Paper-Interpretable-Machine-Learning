@@ -1,0 +1,365 @@
+---
+title: "Choice of database: code"
+author: "Jérémy Feteira"
+date: ""
+lang: fr
+output:
+  rmdformats::readthedown:
+    highlight: kate
+    code_folding: show
+  pdf_document:
+    df_print: kable
+    keep_tex: yes
+    number_section: yes
+    toc: yes
+  html_document:
+    df_print: paged
+    code_folding: show
+    toc: yes
+    toc_float: yes
+editor_options:
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  message = FALSE, warning = FALSE, fig.height = 7, fig.width = 10, sanitize = TRUE
+  )
+```
+
+```{r package}
+library(readr)
+library(dplyr)
+library(kableExtra)
+#library(tidyr)
+library(corrplot)
+library(doParallel)
+library(psych)
+library(ggplot2)
+```
+
+```{r}
+setwd("D:/Memoire/application")
+```
+
+# Grades in Portugal
+
+```{r}
+source("nettoyage_donnees.R")
+```
+
+```{r}
+corrplot(
+  cramer.matrix(data_cleaned_classification), type="upper", diag=FALSE, tl.col="black"
+  )
+```
+
+Low correlations between the features except between subject and paid and between Dalc and Walc.
+
+
+
+
+
+# German cars
+
+This database comes from the following website: https://www.kaggle.com/ander289386/cars-germany
+
+Presentation of the dataset:
+
+- mileage: kilometers traveled by the vehicule.
+- make: make of the car.
+- model: model of the car.
+- fuel: fuel type.
+- gear: manual, automatic or semi-automatic.
+- offerType: type of offer such as new, used, pre-registered, demonstration and employee's car.
+- price: sale price of the vehicule.
+- hp: horse power of the vehicule.
+- year: the vehicule registration year.
+
+
+```{r}
+data_cars <- read.csv("autoscout24-germany-dataset.csv", sep= ",")
+```
+
+Features with no problems:
+
+- make
+- offerType
+
+```{r}
+data_cars$make <- as.factor(data_cars$make)
+levels(data_cars$make)
+
+data_cars$offerType <- as.factor(data_cars$offerType)
+levels(data_cars$offerType)
+```
+
+Features that need work:
+
+Gear: we remove the data because there are not much of them and because we do not have the informations necessary about the gear (it exists only automatic, semi-automatic and manual).
+
+```{r}
+data_cars$gear <- as.factor(data_cars$gear)
+levels(data_cars$gear)
+data_cars[data_cars$gear=="",] <- NA
+
+table(is.na(data_cars$gear))
+```
+
+```{r}
+## we remove the first NA
+data_cars <- na.omit(data_cars)
+data_cars <- droplevels(data_cars)
+```
+
+Model: we remove the data because we miss only 126 models and there are no ways of knowing the model of the cars.
+
+```{r}
+data_cars$model <- as.factor(data_cars$model)
+levels(data_cars$model)
+
+nrow(data_cars[data_cars$model=="",])
+data_cars[data_cars$model=="",] <- NA
+
+table(is.na(data_cars$model))
+```
+
+```{r}
+## we remove the NA
+data_cars <- na.omit(data_cars)
+data_cars <- droplevels(data_cars)
+```
+
+
+Fuel: I searched every model on the internet. Because there were not much cars that had no fuel type (22 in total) I decided to remove them from the dataframe. I just decided to change the fuel to "Electric" for Tesla Model X. In the end, I removed 20 more data.
+
+```{r}
+data_cars$fuel <- as.factor(data_cars$fuel)
+levels(data_cars$fuel)
+data_cars[data_cars$fuel=="-/- (Fuel)",]
+
+data_cars$fuel[data_cars$fuel=="-/- (Fuel)"&data_cars$model=="Model X"] <- "Electric"
+
+data_cars[data_cars$fuel=="-/- (Fuel)",] <- NA
+
+data_cars <- na.omit(data_cars)
+data_cars <- droplevels(data_cars)
+```
+
+I verified the missing values on the new set:
+
+```{r}
+table(is.na(data_cars))
+```
+
+No missing values left.
+
+### Numerical features
+
+Mileage: there is a problem with the Opel Karl, it has done more than 1 million kms since 2019 which is certainly not possible. We will remove this value.
+
+```{r}
+data_cars[data_cars$mileage>600000,]
+data_cars <- data_cars[data_cars$mileage!=1111111,]
+```
+
+Price: the price is very high for the 3 cars but they are possible prices for supercars like them so I decided to keep them.
+
+```{r}
+data_cars[data_cars$price>600000,]
+```
+
+Hp: the highest horse power that a car has is 850 so there is nothing weird for the hp feature.
+
+```{r}
+data_cars[data_cars$hp>750,]
+```
+
+Year: 
+
+```{r}
+tab_fun(table(as.factor(data_cars$year)), title = "Number of cars per year")
+```
+
+
+### Correlation between features
+
+```{r, fig.height = 10, fig.width = 10}
+cl <- detectCores() %>% -1 %>% makeCluster
+registerDoParallel(cl)
+
+pairs.panels(data_cars)
+
+stopCluster(cl)
+```
+
+There is a high correlation between price and horsepower (0.75) and between mileage and year (-0.68).
+
+
+```{r}
+#cl <- detectCores() %>% -1 %>% makeCluster
+#registerDoParallel(cl)
+
+## ask too much memory for my computer/R
+#corrplot(cramer.matrix(data_cars), type="upper", diag=FALSE, tl.col="black")
+
+#stopCluster(cl)
+```
+
+### Descriptive analysis
+
+#### Summary of the features
+
+```{r}
+summary(data_cars)
+```
+
+#### Mileage
+
+```{r}
+ggplot(aes(x=mileage, y=price), data=data_cars) + 
+  geom_point() +
+  labs(subtitle="Mileage according to the price of the car", x="Mileage in kilometers", 
+       y="Price in euros") +  
+  theme_minimal()
+```
+
+It looks like that when mileage increases, prices decrease. With this plot, it looks like it is quite difficult to see a relation between the two. It may be better to use the logarithm for these variables.
+
+### Make
+
+```{r}
+ggplot(data_cars, aes(x=make))+
+  geom_bar(stat="count", width=0.7, fill="darkred")+
+  theme_minimal() + coord_flip()+
+  ggtitle("Number of cars per make")+
+  labs(x="Make",y="Number of cars")
+```
+
+It looks like there are a lot of Volkswagen, Opel and Ford with each make having more than 4000 cars in the dataset. Moreover, we can count 71 makes in this dataset.
+
+```{r}
+ggplot(data_cars, aes(x=make, y=price))+
+  geom_boxplot()+
+  theme_minimal() + coord_flip()+
+  ggtitle("Price of the cars per make")+
+  labs(x="Make",y="Price of the car")
+```
+
+The most expensive car appears to be from Maybach but we can note that there are only a few of them. Lamborghini, Ferrari and McLaren have also expensive cars.
+
+### Fuel
+
+```{r}
+ggplot(data_cars, aes(x=fuel))+
+  geom_bar(stat="count", width=0.7, fill="darkred")+
+  theme_minimal() + coord_flip()+
+  ggtitle("Number of cars per fuel")+
+  labs(x="Fuel",y="Number of cars using this fuel")
+```
+
+For fuel, most of the cars use gasoline or diesel. We can also see that a few of them are hybrid, here they use electric and gasoline, or electric. Finally, we can see that very few cars are using ethanol and hydrogen (3 in total).
+
+```{r}
+ggplot(data_cars, aes(x=fuel, y=price))+
+  geom_boxplot()+
+  theme_minimal() + coord_flip()+
+  ggtitle("Price of the cars per fuel")+
+  labs(x="Gear",y="Price of the car")
+```
+
+It appears that there are no relationships between the price and the fuel the cars are using.
+
+### Gear
+
+```{r}
+ggplot(data_cars, aes(x=gear))+
+  geom_bar(stat="count", width=0.7, fill="darkred")+
+  theme_minimal() + coord_flip()+
+  ggtitle("Number of cars per type of gear")+
+  labs(x="Gear",y="Number of cars using this type of gear")
+```
+
+Most of the cars are manual or automatic. A few of them are semi-automatic.
+
+```{r}
+ggplot(data_cars, aes(x=gear, y=price))+
+  geom_boxplot()+
+  theme_minimal() + coord_flip()+
+  ggtitle("Price of the cars per type of gear")+
+  labs(x="Gear",y="Price of the car")
+```
+
+It looks like that automatic gear increase the price of the car.
+
+
+### Type of offer
+
+```{r}
+ggplot(data_cars, aes(x=offerType))+
+  geom_bar(stat="count", width=0.7, fill="darkred")+
+  theme_minimal() + coord_flip()+
+  ggtitle("Number of cars per type of offer")+
+  labs(x="Type of offer",y="Number of cars")
+```
+
+Most of the cars are used cars. There are only a few of them that are new.
+
+```{r}
+ggplot(data_cars, aes(x=offerType, y=price))+
+  geom_boxplot()+
+  theme_minimal() + coord_flip()+
+  ggtitle("Price of the cars per type of offer")+
+  labs(x="Type of offer",y="Price of the car")
+```
+
+It appears that there are no relationships between the price of the car and its type of offer.
+
+
+### Horse power
+
+```{r}
+ggplot(aes(x=hp, y=price), data=data_cars) + 
+  geom_point() +
+  labs(subtitle="Horse power according to the price of the car", x="Horse power", 
+       y="Price in euros") +  
+  theme_minimal()
+```
+
+It looks like that the higher the horse power, the higher the price.
+
+
+### Year
+
+```{r}
+data_cars$year <- as.factor(data_cars$year)
+```
+
+```{r}
+ggplot(data_cars, aes(x=year))+
+  geom_bar(stat="count", width=0.7, fill="darkred")+
+  theme_minimal() + coord_flip()+
+  ggtitle("Number of cars per year")+
+  labs(x="Year",y="Number of cars")
+```
+
+It looks like we have almost the same number of cars per year.
+
+```{r}
+ggplot(data_cars, aes(x=year, y=price))+
+  geom_boxplot()+
+  theme_minimal() + coord_flip()+
+  ggtitle("Price of the cars per year")+
+  labs(x="Year",y="Price of the car")
+```
+
+It appears that there is a relationship between the years and the price of the cars. One of the reasons could be inflation. Indeed, the higher the year, the higher the price, so this could mean that because prices have risen since 2011, cars are now more expensive.
+
+# Export of the database
+
+```{r}
+require("writexl")
+write_xlsx(data_cleaned_classification, "D:/Memoire/application/data_classification.xlsx")
+write_xlsx(data_cars, "D:/Memoire/application/data_regression.xlsx")
+```
+

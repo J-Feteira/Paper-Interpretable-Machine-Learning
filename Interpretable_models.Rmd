@@ -1,0 +1,537 @@
+---
+title: "Interpretable models"
+author: "Jérémy Feteira"
+date: ""
+lang: fr
+output:
+  rmdformats::readthedown:
+    highlight: kate
+    code_folding: show
+  pdf_document:
+    df_print: kable
+    keep_tex: yes
+    number_section: yes
+    toc: yes
+  html_document:
+    df_print: paged
+    code_folding: show
+    toc: yes
+    toc_float: yes
+editor_options:
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  message = FALSE, warning = FALSE, fig.height = 7, fig.width = 10, sanitize = TRUE
+  )
+```
+
+```{r packages}
+## packages independent from the models
+library(readxl)
+library(stargazer)
+library(readr)
+library(kableExtra)
+library(doParallel)
+library(ggplot2)
+```
+
+```{r function}
+# si above = TRUE on a un header_above
+tab_fun <- function(tab, above = FALSE, title = title, font_size = 10, header = NULL){
+  if(above){
+    tab %>% kable(caption = title) %>%
+    kable_styling(font_size = font_size, full_width=FALSE, stripe_color = "lightgray", stripe_index = 0,
+                  bootstrap_options = c("striped"), position = "center") %>%
+    add_header_above(header = header, bold=TRUE, color="red")%>%
+    column_spec(1, bold=T) %>%
+    row_spec(0, bold=T)
+  } else {
+    tab %>% kable(caption = title) %>%
+      kable_styling(font_size = font_size, full_width=FALSE, stripe_color = "lightgray", stripe_index = 0,
+                    bootstrap_options = c("striped"), position = "center") %>%
+      column_spec(1, bold=T) %>%
+      row_spec(0, bold=T)
+  }
+}
+```
+
+# Importation of the databases
+
+```{r}
+#setwd("D:/Memoire/application")
+#setwd("C:/Perso/Memoire/application")
+```
+
+```{r}
+data_regression <- read_excel("data_regression.xlsx")
+data_classification <- read_excel("data_classification.xlsx")
+```
+
+```{r}
+table(is.na(data_classification))
+table(is.na(data_regression))
+```
+
+# Linear models
+
+This part is for the linear models I created for my research paper.
+
+## Linear regression
+
+I created the following model:
+
+$ln(price_i) = \alpha_i + \beta_{1,i} mileage_i+ \beta_{2,i} gear_i + \beta_{3,i} year2012_i + \beta_{4,i} year2013_i + \beta_{5,i} year2014_i + \beta_{6,i} year2015_i + \beta_{7,i} year2016_i + \beta_{8,i} year2017_i + \beta_{9,i} year2018_i + \beta_{10,i} year2019_i + \beta_{11,i} year2020_i + \beta_{12,i} year2021_i + \beta_{13,i}mileage_i gearManual_i + \beta_{14,i}mileage_i gearSemi-automatic_i + \epsilon_i,$.
+
+The objective is to find what are the features that have an impact on the price of the car. I did not put the `hp` feature because it has a high correlation with prices (0.75) so we already know that the horsepower of a car has an impact on the price.
+
+```{r}
+lm_regression <- lm(log(price)~mileage+gear+year+mileage:gear, data=data_regression)
+```
+
+Now we do the Breusch-Pagan test in order to look at the heteroskedasticity:
+
+```{r}
+library(lmtest)
+bptest(lm_regression)
+```
+
+There is heteroskedasticity in the model.
+
+```{r}
+data_regression_bis <- data_regression
+data_regression_bis$residuals_stringency <- lm_regression$residuals
+varfunc.ols2 <- lm(
+  log(residuals_stringency^2) ~ mileage + gear + year + mileage:gear,
+  data=data_regression_bis
+  )
+
+data_regression_bis$varfunc2 <- exp(varfunc.ols2$fitted.values)
+
+lm_regression_bis <- lm(
+  log(price)~mileage+gear+year+mileage:gear, 
+  data=data_regression_bis, weights=1/sqrt(varfunc2)
+  )
+```
+
+I have removed heteroskedasticity. The model is now a WLS (weight least squares) model and not OLS anymore because I put weights on the values to correct the heteroscedasticity. The stadars errors are now robusts. We can then look at the weights of the model:
+
+```{r}
+summary(lm_regression_bis)
+#stargazer(lm_regression_bis, type="latex")
+```
+
+mileage\*gearManual: "when the car has a manual gear, we observe an increase of `r 100*(exp(0.0000016*1000)-1)`% in prices for cars with 1000 kms in comparison to a car that has automatic gear".
+
+## Logistic regression
+
+Here, I calculated the probability that a car has an automatic or manual gear. For this example, I removed the observations with semi-automatic gear.
+
+```{r}
+data_regression_gear_outcome <- data_regression[data_regression$gear!="Semi-automatic",]
+levels(as.factor(data_regression_gear_outcome$gear))
+data_regression_gear_outcome$gear <- as.factor(data_regression_gear_outcome$gear)
+```
+
+The model is the following:
+
+$\log{\left(\frac{\mathbb{P}(gear=manual)}{1-\mathbb{P}(gear=manual)}\right)} = \alpha + \beta_1 mileage + \beta_2 hp + \beta_3 fuelDiesel + \beta_4 fuelElectric + \beta_5 fuelElectric/Diesel + \beta_6 fuelElectric/Gasoline + \beta_7 fuelEthanol + \beta_8 fuelGasoline + \beta_9 fuelHydrogen + \beta_{10} fuelLPG + \beta_{11} fuelOthers$
+
+```{r}
+logit_regression <- glm(gear~mileage+hp+fuel, data=data_regression_gear_outcome,
+                        family="binomial")
+summary(logit_regression)
+#stargazer(logit_regression, type="latex")
+```
+
+If the fuel is electricity and gasoline, the estimated odds change by a factor of `r exp(-1.857)` in comparison to CNG (compressed natural gas). This means that there is not much chance to find a car with manual gear and with fuel electricity and gasoline.
+
+```{r}
+table_conf_int <- exp(cbind(OR = round(coef(logit_regression),4), round(confint(logit_regression),4)))
+```
+
+```{r}
+tab_fun(round(table_conf_int,4), title="Odd-ratio and confidence intervals of the logistic regression") #%>% as_image(file="D:/Memoire/application/odd_ratio_con_int.png") => to save as image
+```
+
+The several ways to interpret the weights are the following (<https://stats.idre.ucla.edu/other/mult-pkg/faq/general/faq-how-do-i-interpret-odds-ratios-in-logistic-regression/>): - If there is just the intercept in the model, then if we get the exponential of the weight, we get the frequency of the outcome when it is not the category of reference. - When only one binary variable: if the exponential of the weight is 1.50, then the odds for the category are 50% higher than the odds for the reference category. - When only one continuous variable: we calculate, using the weights of the intercept and the variable, by using a number for the variable. For example, for the mileage value we could use 100 000 kms and compare it to 110 000 kms. Then, we make the difference of the 2 values and we get the exponential of the result. It gives us the odds. The explanation is the same as before and it does not depend on the values we chose (here 100 000 kms and 110 000 kms). In this example we have a 10 000 kms increase. - When several variables and no interaction: With Y being the outcome, holding the other variables at a fixed value, the odds of Y=1 for the other category of the variable over the odds of Y=1 for the reference category is the exponential of the weight. - When there are interactions: For example if we put female and math in interaction, we get the following interpretation: "for the female students, a one-unit increase in math score yields a change in log odds of" $weight_{math} + weight_{mathXfemale}$
+
+## GLM and GAM
+
+### GLM
+
+An example for GLM is the logit model which uses a binomial distribution for the outcome feature. Another example is a Poisson regression. The outcome follows a Poisson distribution. For this example, I took the model and the database of this website: <https://stats.idre.ucla.edu/r/dae/poisson-regression/>. The Poisson distribution is used for count features as outcome. Count data are features that consist of discrete features that are non-negative integers.
+
+```{r}
+data_glm_poisson <- read.csv("poisson_sim.csv")
+```
+
+```{r}
+data_glm_poisson <- within(
+  data_glm_poisson, {
+    prog <- factor(prog, levels=1:3, labels=c("General", "Academic", "Vocational"))
+    id <- factor(id)
+    }
+  )
+
+summary_table <- cbind(
+  with(data_glm_poisson, tapply(num_awards, prog, mean)),
+  with(data_glm_poisson, tapply(num_awards, prog, var))
+  )
+colnames(summary_table) <- c("Mean", "Variance")
+tab_fun(round(summary_table,3), title="Conditional means and variances of the feature prog") #%>% as_image(file="D:/Memoire/application/conditional_mean_variance.png")
+```
+
+Moreover, the mean and conditional variance are also close for each level of the feature prog. The model has for explanatory variables prog and math and for outcome num_awards.
+
+```{r}
+glm_Poisson <- glm(num_awards~prog+math, family="poisson", data=data_glm_poisson)
+bptest(glm_Poisson)
+```
+
+The Breusch-Pagan test tells us that there is heteroscedasticity in the model.
+
+In order to test if there is over-dispersion, we can use the following package and function.
+
+```{r}
+library(AER)
+dispersiontest(glm_Poisson, trafo=1)
+```
+
+Because the p-value is greater than 0.05, we can confirm that there are no over-dispersion. Now, we can correct the heteroscedasticity.
+
+```{r}
+std.err <- sqrt(diag(vcovHC(glm_Poisson, type="HC0")))
+summary_table <- cbind(Estimate=coef(glm_Poisson), "Robust SE" = std.err,
+      "Pr(>|z|)" = 2 * pnorm(abs(coef(glm_Poisson)/std.err), lower.tail=FALSE),
+      LL = coef(glm_Poisson) - 1.96 * std.err,
+      UL = coef(glm_Poisson) + 1.96 * std.err)
+
+tab_fun(round(summary_table,3), title="Results for the GLM using the Poisson distribution") #%>% as_image(file="D:/Memoire/application/results_glm.png")
+```
+
+-   "The expected log count for a one-unit increase in math is 0.07"
+
+-   "The expected log count for 'Academic' increases by about 1.1" in comparison to "General"
+
+To test the model, we can use the residual deviance which is the difference between the deviance of the best model and the deviance of the model created:
+
+```{r}
+tab_fun(
+  with(glm_Poisson, 
+  cbind(res.deviance = deviance, df = df.residual, p = pchisq(deviance, df.residual, lower.tail=FALSE))
+  ), title="Residual deviance of the model")
+```
+
+### GAM
+
+For this example, I did a GAM on the dataset of the German cars. The outcome is the mileage and the explanatory features are the price and the horsepower (hp).
+
+```{r}
+library(mgcv)
+gam_model <- gam(mileage~s(price)+s(hp), data=data_regression)
+
+bptest(gam_model)
+```
+
+The p-value is strictly below 0.05 so there is heteroscedasticity in the model.
+
+```{r}
+data_regression_bis <- data_regression
+data_regression_bis$residuals_stringency <- gam_model$residuals
+
+library(gamlss)
+varfunc.gam <- gamlss(
+  log(residuals_stringency^2) ~ log(price) + log(hp),
+  data=data_regression_bis
+  )
+
+data_regression_bis$varfunc <- exp(varfunc.gam$mu.fv) ## to take the fitted values
+
+gam_model_bis <- gam(
+  mileage~s(price)+s(hp), data=data_regression_bis, weights=1/sqrt(varfunc)
+  )
+```
+
+```{r}
+summary(gam_model_bis)
+#stargazer(gam_model_bis, type="latex")
+```
+
+To have a better understanding of what the terms meant, I used this website: <https://m-clark.github.io/generalized-additive-models/application.html#single-predictor>.
+
+First of all, every weights are significantly different than 0 and the adjusted R square is 0.577. The term "edf" is the "effective degrees of freedom". The GCV (generalized cross validation) score is "an estimate of the mean square prediction error based on a leave-one-out cross validation estimation process". It estimates the model by removing an observation and then it notes the "squared residual predicting observation $i$ from the model" and do the same thing for every other observation. It can help to choose the best model between several models and as for AIC, the lower the better. Here is how the plot looks like. (<https://cran.r-project.org/web/packages/mgcViz/vignettes/mgcviz.html>)
+
+```{r}
+library(mgcViz)
+gam_model_bis_plot <- getViz(gam_model)
+plot_gam_model <- plot( sm(gam_model_bis_plot, 1) )
+
+cl <- detectCores() %>% -1 %>% makeCluster
+registerDoParallel(cl)
+
+plot_gam_model +
+  l_points(shape = 19, size = 1, alpha = 0.1) +
+  l_fitLine(colour = "red") + 
+  l_ciLine(mul = 5, colour = "blue", linetype = 2) +
+  l_rug(mapping=aes(x=x, y=y), alpha = 0.8) + 
+  theme_classic()
+
+stopCluster(cl)
+```
+
+# Decision tree
+
+In this part I created a decision tree with the data on grades in Portugal. The outcome is the feature average_mark_factor which are the grades of the students in portuguese and maths split in 2 categories: [0, 10], ]10, 20]. Here, the objective is to have a better understanding of the bad grades.
+
+```{r}
+data_classification$average_mark_factor[data_classification$average_mark_factor=="mark [0,05]"] <-
+  "mark [0,10]"
+data_classification$average_mark_factor[data_classification$average_mark_factor=="mark ]05,10]"] <-
+  "mark [0,10]"
+data_classification$average_mark_factor[data_classification$average_mark_factor=="mark ]10,15]"] <-
+  "mark [10,20]"
+data_classification$average_mark_factor[data_classification$average_mark_factor=="mark ]15,20]"] <-
+  "mark [10,20]"
+
+levels(as.factor(data_classification$average_mark_factor))
+table(data_classification$average_mark_factor)
+```
+
+```{r}
+library(rsample)
+set.seed(3)
+
+## split the dataframe in 2 with test and train data
+data_classification_split <- data_classification %>% initial_split(prop = 0.8)
+
+test <- data_classification_split %>% testing()
+train <- data_classification_split %>% training()
+```
+
+```{r}
+library(rpart)
+max_tree <- rpart.control(cp = 0, max.depth = 0, minbucket = 1, minsplit = 1)
+tree <- rpart(
+  average_mark_factor~. , data=train, control=max_tree, parms = list(split = "information")
+  )
+```
+
+Then we look at the complexity of the tree.
+
+```{r}
+plotcp(tree) ## complexity of the tree
+tab_fun(round(head(tree$cp, -9),3), title="Complexity")
+```
+
+By lookig at the plot, we can see a complexity of 0.01 appears to be interesting. We will have a tree with 16 splits which is enough and not too much for this example.
+
+```{r, fig.height= 10, fig.width = 15}
+treebis <- prune(tree, cp = 0.01)
+
+library(rpart.plot)
+prp(
+  treebis, type=0, extra=2, split.box.col="darkred", cex=0.75, split.col="White", compress=TRUE,
+  box.palette=list("lightblue", "#c1c2be"), branch.col="black", shadow.col = "grey", varlen=15
+  )
+```
+
+Now, we will test our final tree on the test set:
+
+```{r}
+pred_tree <- predict(treebis, newdata = test, type = "class")
+tab_fun(table(pred_tree, t(test[,32])), title="Confusion matrix of the tree") %>%
+  add_header_above(c("","Reality"=2))
+erreur_moyenne_rpart <- mean(pred_tree != t(test[,32]))
+```
+
+With our matrix confusion, we get the following results:
+
+-   `r round((table(pred_tree, t(test[,32]))[1] + table(pred_tree, t(test[,32]))[4])/nrow(test)*100,3)`% of the data are well predicted.
+-   The sensitivity is `r round(table(pred_tree, t(test[,32]))[1] / (table(pred_tree, t(test[,32]))[1] + table(pred_tree, t(test[,32]))[2])*100,3)`%.
+-   The specificity is `r  round(table(pred_tree, t(test[,32]))[4] / (table(pred_tree, t(test[,32]))[3] + table(pred_tree, t(test[,32]))[4])*100,3)`%.
+-   The average error is `r round(erreur_moyenne_rpart*100,3)` % for this model.
+
+```{r}
+data.frame(vi=treebis$variable.importance, variable=names(treebis$variable.importance)) %>%
+  ggplot() + aes(x= reorder(variable,vi), y = vi) + 
+  geom_col(width = 0.4, color = "darkred", fill = "darkred") +
+  coord_flip() + labs(y = "Importance mesure", x = NULL) + theme_minimal()
+```
+
+# Decision rules
+
+This part is focused on the decision rules which are in the following form: "IF ... AND ... THEN ...".
+
+## OneR
+
+<https://www.r-bloggers.com/2018/11/oner-fascinating-insights-through-simple-rules/>
+
+<https://vonjd.github.io/OneR/>
+
+This part is for OneR models. OneR is a decision rule based on a unique rule. For this part I am going to create a model using the German cars dataset and with outcome being the gear. Here, we will let R split the features hp and mileage by using the function bin.
+
+```{r}
+library(OneR)
+
+data_OneR <- optbin(
+  gear~mileage+hp+fuel+offerType+year, data=data_regression_gear_outcome, na.omit=FALSE,
+  method="infogain"
+  ) 
+## it determines the optimal bins for numerical data
+model_OneR <- OneR(
+  gear~mileage+hp+fuel+offerType+year, data=data_OneR, verbose=TRUE
+  )
+
+summary(model_OneR)
+```
+
+Here, the feature with the highest accuracy is hp. So, the rules are created using this feature. We can see that when the horsepower is below 147, the model predicts a manual gear for the cars and when the horsepower is above 147, the model predicts automatic gear. This means that the more power the car has, the higher chance there is that it will be an automatic gear car.
+
+```{r}
+prediction <- predict(model_OneR, data_OneR)
+eval_model(prediction, data_OneR)
+```
+
+Looking at the confusion matrix, we have:
+
+-   80.63% of the data are well predicted (here it is the accuracy).
+-   The sensitivity is `r 10555/(10555+5147)`%.
+-   The specificity is `r 26532/(26532+3760)`%.
+-   The error rate is 19.37% for this model.
+
+## RIPPER
+
+<https://medium.com/swlh/the-ripper-algorithm-a5eebbe3661d>
+
+The RIPPER algorithm can be found in the Rweka package with the function JRip.
+
+```{r}
+library(RWeka)
+model_RIPPER <- JRip(gear ~ mileage+hp+fuel+offerType+year, data = data_OneR)
+```
+
+```{r}
+summary(model_RIPPER)
+model_RIPPER
+```
+
+The model has 12 rules. As seen with the OneR algorihtm, the feature that is the most used to determine the rules is the hp feature. There is a 82.1% of instances that are correctly classified. On the other hand, the mean absolute error is 0.2854 which can be a little high.
+
+I tried to test the model without the hp feature, but the results were not good:
+
+```{r}
+model_RIPPER_without_hp <- JRip(gear ~ mileage+fuel+offerType+year, data = data_OneR)
+model_RIPPER_without_hp
+summary(model_RIPPER_without_hp)
+```
+
+## BRL
+
+For this type of decision rules, the package sbrl has been removed from the new versions of R. The only possible thing is to download the package from this website: <https://cran.r-project.org/src/contrib/Archive/sbrl/>.
+
+# RuleFit
+
+The RuleFit algorithm is using boosting on decision trees and then take the decision rules created and use these rules to do LASSO models. There are two main packages that does the job: xrf and pre. The package xrf is the fastest and newest package for RuleFit but I found the pre package easier so I decided to do my example with the pre package.
+
+For xrf: <https://cran.r-project.org/web/packages/xrf/readme/README.html>
+
+```{r}
+## package xrf -> just an example
+library(xrf) ## newest, fastest package for RuleFit
+
+cl <- detectCores() %>% -1 %>% makeCluster
+registerDoParallel(cl)
+
+RuleFit_model_xrf <- xrf(
+  gear ~ mileage+hp+fuel+offerType+year, data=data_regression, family="binomial",
+  xgb_control = list(nrounds = 100, max_depth = 1)
+  )
+
+stopCluster(cl)
+
+summary(RuleFit_model_xrf)
+RuleFit_model_xrf
+
+## difficult to use
+## pre package looks easier for interpretation
+```
+
+For pre package I used these websites to help me: <https://github.com/marjoleinF/pre#example-a-rule-ensemble-for-predicting-ozone-levels> and <https://arxiv.org/pdf/1707.07149.pdf>.
+
+The first thing to do is to tune the parameters. I decided to create a model with only 3 features. The outcome is the price and the 2 explanatory features are mileage and the gear.
+
+```{r}
+############################## tuning parameters #############################################
+library(caret)
+library(e1071)
+library(pre)
+
+tuneGrid <- caret_pre_model$grid(
+  x=data_regression_gear_outcome[,c(1,5)], y=data_regression_gear_outcome$price, maxdepth=3,
+  learnrate = c(.01, .1), penalty.par.val = c("lambda.1se", "lambda.min")
+  )
+
+set.seed(77)
+
+cl <- detectCores() %>% -1 %>% makeCluster
+registerDoParallel(cl)
+
+best_RuleFit <- train(
+  x = data_regression_gear_outcome[,c(1,5)], y = data_regression_gear_outcome$price, 
+  method = caret_pre_model, trControl = trainControl(number=1, verboseIter=TRUE), 
+  verbose=TRUE, tuneGrid = tuneGrid)
+
+stopCluster(cl)
+
+save(best_RuleFit, file="best_model_RuleFit.RData")
+```
+
+The final model is the following:
+
+```{r}
+load("D:/Memoire/application/best_model_RuleFit.RData")
+```
+
+```{r}
+## to obtain the final model
+best_RuleFit$finalModel
+```
+
+Lambda is the penalty parameter value which chooses the final ensembles. Then, we can look at the rule column which is the rules that where taken in the final ensembles. The coefficients are the estimated coefficients of the LASSO model, which tells "the difference in the expected value of the response when the conditions of the rule are met, compared to when they are not". Finally, the last column is the description and it provides the conditions of the rules.
+
+Now, we are going to interpret the first coefficient: 
+the first rule shows that observations with a mileage below 67200 km and an automatic gear have an expected price 6386 euros higher than observations that do not match these conditions.
+
+We can plot the decision trees of the final ensemble:
+
+```{r}
+plot(best_RuleFit$finalModel, nterms = 9, cex = .8)
+```
+
+For prediction, we can use the predict function:
+
+```{r}
+predict(
+  best_RuleFit$finalModel, 
+  newdata=as.data.frame(data_regression_gear_outcome[c(1,200,400,8000,45000), c(1,5)])
+  )
+```
+
+We can do a cross validation to obtain "an estimate of predictive accuracy on future observations".
+
+```{r}
+cl <- detectCores() %>% -1 %>% makeCluster
+registerDoParallel(cl)
+
+cv_RuleFit <- pre::cvpre(best_RuleFit$finalModel, parallel=TRUE)
+
+stopCluster(cl)
+
+save(cv_RuleFit, file="cvpre_RuleFit.RData")
+```
+
+It also gives us the MSE (mean squared error) and MAE (mean absolute error).
+
+

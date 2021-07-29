@@ -1,0 +1,219 @@
+---
+title: "What are the global methods that give a better understanding of the role of the features of a black box model?"
+author: "Jérémy Feteira"
+date: ""
+lang: fr
+output:
+  rmdformats::readthedown:
+    highlight: kate
+    code_folding: show
+  pdf_document:
+    df_print: kable
+    keep_tex: yes
+    number_section: yes
+    toc: yes
+  html_document:
+    df_print: paged
+    code_folding: show
+    toc: yes
+    toc_float: yes
+editor_options:
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  message = FALSE, warning = FALSE, fig.height = 7, fig.width = 10, sanitize = TRUE, cache=TRUE
+  )
+```
+
+```{r package}
+library(doParallel)
+library(kableExtra)
+library(ggplot2)
+library(randomForest)
+```
+
+
+# Importation of the databases and random forests
+
+```{r}
+tryCatch(
+  expr={source("D:/Memoire/rendu_final_code/import.R")},
+  error=function(e){source("C:/Perso/Memoire/application/import.R")}
+)
+```
+
+```{r}
+table(is.na(data_classification))
+table(is.na(data_regression))
+```
+
+
+
+# Permutation feature importance
+
+We can also look at the feature importance in order to have a better understanding at our model. For this part, I used my two random forests created previously on the German cars dataset and the marks in Portugal dataset. I decided to show how to use the vip function of the vip package because it is model-agnostic, which means it works with every model. (https://cran.r-project.org/web/packages/vip/vignettes/vip-introduction.pdf)
+
+```{r}
+library(vip)
+vip(
+  rf_optimal_regression_bis, bar=TRUE, horizontal=TRUE, aesthetics=list(fill="darkred"),
+  method="permut", target="price", metric="mae", pred_wrapper=predict
+  ) +
+  theme_classic() + geom_col(fill="darkred") + xlab("Feature") + ylab("Importance") + 
+  ggtitle("Permutation feature importance for German cars dataset") +
+  theme(text=element_text(size=22))
+```
+
+It looks like that the most important feature is the year just before the mileage feature in our random forest.
+
+It is also working with categorical features. With the random forest on the marks in Portugal dataset, we get the following plot:
+
+```{r}
+vip(
+  rf_best_classification_bis, bar=TRUE, horizontal=TRUE, aesthetics=list(fill="darkred"),
+  method="permut", target="average_mark_factor", metric="accuracy", pred_wrapper=predict
+  ) +
+  theme_classic() + geom_col(fill="darkred") + xlab("Feature") + ylab("Importance") + 
+  ggtitle("Permutation feature importance for the marks in Portugal dataset") +
+  theme(text=element_text(size=22))
+```
+
+The most important feature of the random forest is failures.
+
+
+
+# Global surrogate
+
+In this case I used a tree to explain the predictions of the random forest. 
+
+## German cars dataset
+
+The plot is the following.
+
+```{r}
+library(iml)
+```
+
+```{r}
+pred_fun <- function(X.model, newdata) {predict(X.model, newdata)}
+
+predictor <- Predictor$new(
+  rf_optimal_regression_bis, data=train_regression[,-5], y=train_regression$price,
+  predict.function=pred_fun
+  )
+```
+
+```{r}
+## creation of the tree
+cl <- detectCores() %>% -1 %>% makeCluster
+registerDoParallel(cl)
+
+tree <- TreeSurrogate$new(predictor, maxdepth=2)
+
+stopImplicitCluster()
+```
+
+```{r}
+plot_tree_global_surrogate <- plot(tree) + aes(y=train_regression$price) +
+  geom_histogram(fill="darkred", col="darkred", binwidth=1000) + coord_flip() +
+  ggtitle(
+    "Histogram of the predicted price of the tree to explain the random forest on the German cars dataset"
+    ) + theme_classic() + theme(text=element_text(size=22))
+
+ggpubr::annotate_figure(
+  plot_tree_global_surrogate, bottom=textGrob("Predicted price", rot=0, vjust=0.2, gp=gpar(cex=1.6))
+  )
+```
+
+From what we can see, it looks like that the rule where a car has automatic gear and that was sold after 2017 have higher prices than the other cars. Moreover, if the year is between 2011 and 2016 and the car has automatic gear, then the price seems also higher. Finally, we could say that the fact that a car has an automatic gear increase the predicted price for a car in our model.
+
+
+## Average marks in Portugal dataset
+
+The plot is the following.
+
+```{r}
+predictor_classification <- Predictor$new(
+  rf_best_classification_bis, data=train[,-c(32)], y=train$average_mark_factor,
+  predict.function=pred_fun
+  )
+```
+
+```{r}
+## creation of the tree
+tree_classification <- TreeSurrogate$new(predictor_classification, maxdepth=2)
+```
+
+```{r}
+plot(tree_classification) + ylab("Number") + xlab("Average mark") +
+  aes(fill="darkred") + scale_fill_manual(values="darkred") +
+  ggtitle(
+    "Histogram of the predicted marks of the tree to explain the random forest on the marks in Portugal dataset"
+    ) + theme_classic() + theme(legend.position="none", text=element_text(size=22))
+```
+
+For this random forest, it looks like that the mark below 10 is explained by the fact that students have 1 or more failures, or by the fact that students have 0 failures but they do not want to do higher education.
+
+
+
+# Feature interaction
+
+For this part I used the same random forest as before and the iml package (http://xai-tools.drwhy.ai/iml.html). The first plot is the overall interaction strength.
+
+```{r}
+library(iml)
+```
+
+
+```{r}
+pred_fun <- function(X.model, newdata) {
+  predict(X.model, newdata)
+}
+```
+
+
+```{r}
+predictor_interaction <- Predictor$new(
+  rf_optimal_regression_bis, data=train_regression[,-c(5)], y=train_regression$price,
+  predict.function=pred_fun
+  )
+```
+
+```{r}
+cl <- detectCores() %>% -1 %>% makeCluster
+registerDoParallel(cl)
+
+interact <- Interaction$new(predictor_interaction)
+
+stopImplicitCluster()
+```
+
+```{r}
+plot(interact) +
+  ggtitle("Overall interaction strength for the random forest on the German cars dataset") +
+  theme_classic() + theme(text=element_text(size=22))
+```
+
+It appears that mileage and year have the highest relative interaction with all other features.
+
+The second plot is the 2-ways interaction strength.
+
+```{r}
+cl <- detectCores() %>% -1 %>% makeCluster
+registerDoParallel(cl)
+
+interaction_2_ways_year <- Interaction$new(predictor_interaction, feature="year")
+
+stopImplicitCluster()
+```
+
+```{r}
+plot(interaction_2_ways_year) +
+  ggtitle("2-ways interaction strength for the random forest on the German cars dataset") +
+  theme_classic() + theme(text=element_text(size=22))
+```
+
+It looks like that the year has a high interaction with the feature mileage, fuel and gear.
+

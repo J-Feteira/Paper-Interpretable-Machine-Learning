@@ -1,0 +1,315 @@
+---
+title: "What are the global methods that show the influence of a feature on the predicted outcome of a black box model?"
+author: "Jérémy Feteira"
+date: ""
+lang: fr
+output:
+  rmdformats::readthedown:
+    highlight: kate
+    code_folding: show
+  pdf_document:
+    df_print: kable
+    keep_tex: yes
+    number_section: yes
+    toc: yes
+  html_document:
+    df_print: paged
+    code_folding: show
+    toc: yes
+    toc_float: yes
+editor_options:
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  message = FALSE, warning = FALSE, fig.height = 7, fig.width = 10, sanitize = TRUE, cache=TRUE
+  )
+```
+
+```{r package}
+library(doParallel)
+library(kableExtra)
+library(ggplot2)
+library(randomForest)
+```
+
+```{r function}
+# if above=TRUE we have header_above
+tab_fun <- function(tab, above=FALSE, title=title, font_size=10, header=NULL){
+  if(above){
+    tab %>% kable(caption=title, format="latex") %>%
+    kable_styling(
+      font_size=font_size, full_width=FALSE, stripe_color="lightgray", stripe_index=0,
+      latex_options=c("latex", "HOLD_position"), position="center"
+      ) %>%
+    add_header_above(header=header, bold=TRUE, color="red") %>%
+    column_spec(1, bold=T) %>%
+    row_spec(0, bold=T)
+  } else {
+    tab %>% kable(caption=title, format="latex") %>%
+      kable_styling(
+        font_size=font_size, full_width=FALSE, stripe_color="lightgray", stripe_index=0,
+        latex_options=c("latex", "HOLD_position"), position="center"
+        ) %>%
+      column_spec(1, bold=T) %>%
+      row_spec(0, bold=T)
+  }
+}
+```
+
+
+
+# Importation of the databases and random forests
+
+```{r}
+tryCatch(
+  expr={source("D:/Memoire/rendu_final_code/import.R")},
+  error=function(e){source("C:/Perso/Memoire/application/import.R")}
+)
+```
+
+```{r}
+table(is.na(data_classification))
+table(is.na(data_regression))
+```
+
+
+
+# PDP
+
+In order to have a better understanding on how to use PDPs, I took inspiration from this website: https://bgreenwell.github.io/pdp/articles/pdp.html. I decided to do the PDP on a random forest using the German cars dataset for the numeric features example and the marks in Portugal for the example with the categorical features.
+
+The first things we need to do is to look at the distribution of the features in order to make no mistakes and not overinterpret some results.
+
+```{r}
+## mileage
+ggplot(data=data_regression_bis) + geom_histogram(fill="darkred", col="grey", binwidth=5000) + 
+  aes(mileage) + labs(y="Number", x="Mileage of the cars") + 
+  theme_classic() + ggtitle("Histogram of the mileage of the cars") + theme(text=element_text(size=22))
+```
+
+```{r}
+## price
+ggplot(data=data_regression_bis) + geom_histogram(fill="darkred", col="grey", binwidth=5000) + 
+  aes(price) + labs(y="Number", x="Price of the cars") + 
+  theme_classic() + ggtitle("Histogram of the price of the cars") + theme(text=element_text(size=22))
+```
+
+With a numerical feature, we get the following result:
+
+```{r}
+require(pdp)
+
+cl <- detectCores() %>% -1 %>% makeCluster
+registerDoParallel(cl)
+
+rf_optimal_regression_bis %>%
+  partial(pred.var="mileage", train=train_regression, rug=TRUE) %>%
+  autoplot(smooth=TRUE) +
+  theme_classic() + ggtitle("PDP of the random forest on the German cars dataset") +
+  ylab("Predicted price") + xlab("Mileage") + theme(text=element_text(size=22))
+
+stopImplicitCluster()
+```
+
+From what we can see, it looks like that the average predicted price is decreasing when mileage increase. It is also important to note that we cannot interpret when the mileage is strictly above 200 000 because there are not much data.
+
+We can also create a PDP with a numeric feature as outcome and a categorical feature as explanatory feature. It creates the same plot as when there are two categorical features but the interpretation is not the same.
+
+```{r}
+rf_optimal_regression_bis %>%
+  partial(pred.var="gear", train=train_regression, rug=TRUE) %>%
+  autoplot(smooth=TRUE) +
+  theme_classic() + ggtitle("PDP of the random forest on the German cars dataset") +
+  ylab("Predicted price") + xlab("Gear") + theme(text=element_text(size=22))
+```
+
+Indeed, it looks like that the predicted price of cars is higher when the car has automatic gear than manual or semi-automatic. We cannot interpret the semi-automatic category because there are not much data for this category.
+
+With a categorical feature, we get the following result. The first plot is a function that can be used for every model:
+
+```{r}
+rf_best_classification_bis %>%
+  partial(pred.var = "failures", train=train) %>%
+  autoplot(smooth=FALSE) +  theme_classic() + 
+  ggtitle("PDP of the random forest on the marks in Portugal dataset") + 
+  ylab("Predicted average mark probability") + xlab("Failures") + ylim(-0.8, 0.6) +
+  theme(text=element_text(size=22))
+```
+
+As the previous plot, this plot shows that the probability of having a mark between 0 and 10 is higher when a student has at least once failure. Maybe this result is not significative because, as we can see in the following table, there are not much students that have 1 or more failure in comparison to 0.
+
+```{r}
+tab_fun(t(table(train$failures)), title="Number of failures for the training set")
+```
+
+
+The second plot is from the randomForest package. This is the plot we get when doing a random forest. This is not the most relevant plot for my research paper but it is just to show that PDP can be done from the randomForest package directly.
+
+```{r}
+partialPlot(
+  x=rf_best_classification_bis, pred.data=as.data.frame(test), x.var=failures, 
+  which.class="mark [0,10]", ylab="Predicted average mark probability",
+  xlab="Failures", las=1, main="PDP of the random forest on the marks in Portugal dataset",
+  ylim=c(-0.6, 0.6)
+  )
+```
+
+This plot shows that students that have 1 or more failures have a higher probability of having a mark between 0 and 10.
+
+All these interpretations were made because I already worked on the data and did some factorial analysis previously for the marks in Portugal and descriptive analysis for the German cars dataset but this type of plot needs to be carefully interpreted. Moreover, PDP does not work if the categorical features used in the model are not factors so a conversion into factor for each feature is needed before doing the model.
+
+
+
+# ICE
+
+To make an ICE plot, we need to download the package ICEbox. In order to create my own plot, I looked at those two websites: https://arxiv.org/pdf/1309.6392.pdf and https://rdrr.io/cran/ICEbox/man/plot.ice.html.
+
+I decided to use the dataframe on the German car dataset and my random forest used for the PDP with the price as outcome and the mileage as predictor. The first thing to do is to built the ICE.
+
+```{r}
+require(ICEbox)
+
+cl <- detectCores() %>% -1 %>% makeCluster
+registerDoParallel(cl)
+
+ICE_model <- ice(
+  object=rf_optimal_regression_bis, X=as.data.frame(train_regression),
+  y=train_regression$price, predictor="mileage", frac_to_build = .1
+  )
+
+stopImplicitCluster()
+```
+
+Then we can plot the curves, with the PDP curve in yellow and the individuals in grey. I decided to use the quantiles because the mileage has a lot of low values but not much high values.
+
+```{r}
+## ICE plot
+cl <- detectCores() %>% -1 %>% makeCluster
+registerDoParallel(cl)
+
+plot(
+  ICE_model, x_quantile=TRUE, plot_pdp=TRUE, frac_to_plot=0.75, xlab="Quantile of mileage",
+  ylab="Predicted price", main="ICE plot on the German car dataset", cex.axis=1.6, cex.lab=1.6,
+  cex.main=1.6, plot_orig_pts_preds=FALSE, cex=1.6
+  )
+
+stopImplicitCluster()
+```
+
+For most cars there is a decrease in predicted price when mileage increases until the first decile. Then between the first and second decile, there is an increase in predicted prices before it drops again. The explanation behind this increase is the fact that some expensive cars are certainly represented at this quantile. Moreover, it looks like the predicted price does not decrease much when the mileage has reached the third decile, which means with an average of `r quantile(train_regression$mileage,0.3)`kms.
+
+Finally, we can note that ICE does not work with categorical features.
+
+I also did a c-ICE plot.
+
+```{r}
+## c-ICE plot
+cl <- detectCores() %>% -1 %>% makeCluster
+registerDoParallel(cl)
+
+plot(
+  ICE_model, x_quantile=TRUE, plot_pdp=TRUE, frac_to_plot=0.75, xlab="Quantile of mileage",
+  ylab="Centered predicted price", main="c-ICE plot on the German car dataset", cex.axis=1.6, 
+  plot_orig_pts_preds=FALSE, centered=TRUE, cex.axis=1.6, cex.lab=1.6, cex.main=1.6, cex=1.6
+  ) + 
+  theme(text=element_text(size=22))
+
+stopImplicitCluster()
+```
+
+This plot shows that interactions between mileage and the other features "create cumulative differences in fitted values of up to" 40\% of the range of the predicted price.
+
+Finally, here is how to do a d-ICE plot.
+
+```{r}
+## d-ICE plot
+cl <- detectCores() %>% -1 %>% makeCluster
+registerDoParallel(cl)
+
+d_ICE_model <- dice(ICE_model)
+
+stopImplicitCluster()
+```
+
+```{r}
+cl <- detectCores() %>% -1 %>% makeCluster
+registerDoParallel(cl)
+
+plot(
+  d_ICE_model, x_quantile=FALSE, plot_dpdp=TRUE, frac_to_plot=0.75, 
+  xlab="Mileage", ylab="Derivative predicted price", cex.axis=1.6, cex.lab=1.6, cex.main=1.6,
+  cex=1.6, main="d-ICE plot on the German car dataset", plot_orig_pts_deriv=FALSE
+  ) + 
+  theme(text=element_text(size=22))
+mtext("Standard deviation of the partial derivatives", side=4, line=4)
+
+stopImplicitCluster()
+```
+
+The plot below the main plot is "the standard deviation of the partial derivatives at each point". This plot is similar to a summary and in this example, it tells that it looks like that there is heterogeneity between 0 and 20 000 kilometers.
+
+
+
+# ALE
+
+In order ot create ALE plot, I took inspiration from these two websites: http://xai-tools.drwhy.ai/ALEplot.html and  https://cran.r-project.org/web/packages/ALEPlot/ALEPlot.pdf.
+
+I used the German cars dataset to do my plots. One plot is with the feature mileage.
+
+```{r}
+require(ALEPlot)
+
+pred_fun <- function(X.model, newdata) {
+  predict(X.model, newdata)
+  }
+```
+
+```{r}
+ALE_regression <- ALEPlot(
+  X=as.data.frame(train_regression), X.model=rf_optimal_regression_bis, J=c(1),
+  pred.fun=pred_fun
+  )
+```
+
+The complete plot is the following:
+
+```{r}
+ggplot() + geom_line(col="darkred", stat="identity") + 
+  aes(x=ALE_regression$x.values, y=ALE_regression$f.values, xend=max(ALE_regression$x.values),
+      yend=max(ALE_regression$f.values)) + 
+  labs(y="ALE of price", x="Mileage") + theme_classic() +
+  ggtitle("ALE plot of the German cars dataset") + theme(text=element_text(size=22))
+```
+
+Because there is only one row that is beyond 250000, if we remove this value, we get:
+
+```{r}
+ggplot() + geom_line(col="darkred", stat="identity") + 
+  aes(x=ALE_regression$x.values, y=ALE_regression$f.values, xend=max(ALE_regression$x.values),
+      yend=max(ALE_regression$f.values)) + 
+  labs(y="ALE of price", x="Mileage") + theme_classic() +
+  ggtitle("ALE plot of the German cars dataset") + xlim(0, 220000) + theme(text=element_text(size=22))
+```
+
+This plot shows that the average prediction of prices decreases when mileage increase. For example, when the mileage feature is around 100000, then the prediction is the same as the average prediction.
+
+The other plot is with the feature gear, to show how it is presented with a categorical value:
+
+```{r}
+ALE_regression_gear <- ALEPlot(
+  X=as.data.frame(train_regression), X.model=rf_optimal_regression_bis, J=c("gear"),
+  pred.fun=pred_fun, NA.plot=FALSE
+  )
+```
+
+```{r}
+ggplot() + geom_bar(fill="darkred", col="grey", stat="identity") + 
+  aes(x=ALE_regression_gear$x.values, y=ALE_regression_gear$f.values) + 
+  labs(y="ALE of price", x="Gear") + theme_classic() +
+  ggtitle("ALE plot of the German cars dataset") + ylim(-5000, 10000) + theme(text=element_text(size=22))
+```
+
+When the car has an automatic gear, the predicted price is above the average prediction. Note that, as with PDP and ICE, we cannot interpret the category semi-automatic due to a lack of data for this category.
+

@@ -1,3 +1,4 @@
 # Paper-Interpretable-Machine-Learning
 
-The .csv are the original datasets and the .xlsx and poisson_sim.csv are the dataset cleaned and that will be used to create the models.
+This is the code used during my end of semester project in Master 1. The objective was to create a Master's research dissertation on the interpretability of Machine Learning. 
+This project was done alone.
